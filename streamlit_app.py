@@ -139,6 +139,11 @@ def atualiza_verificada(carga_verificada, URL="https://apicarga.ons.org.br/prd/"
         return carga_verificada
     
 
+def atualizar_dados_e_data():
+    st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"])
+    st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
+
+
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
         st.session_state["carga_verificada"], st.session_state["carga_programada"] = carrega_dados()
@@ -150,34 +155,36 @@ def main():
     col_11, col_12 = st.columns([3, 1])
 
     with col_12:
-        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 1, 1])
+        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1.8, 1, 1])
 
         with col_12_1:
             with st.popover("📆"):
-                st.session_state["dia_selecionado"] = st.date_input(
+                st.date_input(
                     "Selecione o dia para plotagem:",
-                    value=st.session_state["carga_verificada"].index.date[-1],
+                    key="dia_selecionado",
                     min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
                     max_value=max(pd.unique(st.session_state["carga_verificada"].index.date))
                 )
 
         with col_12_2:
+            with st.popover(f"📍 **{st.session_state['area_selecionada']}**"):
+                st.selectbox(
+                    "Selecione a área para plotagem:",
+                    options=st.session_state["carga_verificada"].columns.tolist(),
+                    key="area_selecionada",
+                )
+
+        with col_12_3:
             with st.popover("📈"):
                 st.write("### Adicionar")
 
-
-        with col_12_3:
-            with st.popover("📍"):
-                st.session_state["area_selecionada"] = st.selectbox(
-                    "Selecione a área para plotagem:",
-                    options=st.session_state["carga_verificada"].columns.tolist(),
-                    index=0
-                )
-
         with col_12_4:
-            if st.button("🔄"):
-                st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"], URL="https://apicarga.ons.org.br/prd/", areas=['SECO', 'S', 'NE', 'N'], endpoint="cargaverificada")
-                st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
+            st.button("🔄", on_click=atualizar_dados_e_data)
+            #if st.button("🔄"):
+                #st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"])
+                #st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
+
+                #st.rerun()
 
         with st.container(height=424):
             st.markdown("""
