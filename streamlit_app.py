@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import locale
 from datetime import datetime
 
@@ -38,17 +39,21 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
     plot_verificada = carga_verificada[carga_verificada.index.date == dia][area]
     plot_programada = carga_programada[carga_programada.index.date == dia][area]
 
-    fig.add_trace(go.Scatter(x=plot_verificada.index, y=plot_verificada.values,
-                             mode='lines+markers',
-                             name='Carga Verificada',
-                             line=dict(color='blue', width=3),
-                             marker=dict(size=4)))
+    fig.add_trace(go.Scatter(
+        x=plot_verificada.index, y=plot_verificada.values,
+        mode='lines+markers',
+        name='Carga Verificada',
+        line=dict(color='blue', width=3),
+        marker=dict(size=4)
+    ))
 
-    fig.add_trace(go.Scatter(x=plot_programada.index, y=plot_programada.values,
-                             mode='lines+markers',
-                             name='Carga Programada',
-                             line=dict(color='red', width=3, dash='dash'),
-                             marker=dict(size=4)))
+    fig.add_trace(go.Scatter(
+        x=plot_programada.index, y=plot_programada.values,
+        mode='lines+markers',
+        name='Carga Programada',
+        line=dict(color='green', width=3, dash='dash'),
+        marker=dict(size=4)
+    ))
 
     fig.update_layout(
         title={
@@ -57,7 +62,7 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
             'x': 0.5,
             'xanchor': 'center'
         },
-        xaxis_title='Data e Hora',
+        xaxis_title='Hora',
         yaxis_title='Carga (MWMed)',
         legend_title='',
         template='plotly_white'
@@ -65,6 +70,74 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
 
     st.plotly_chart(fig, use_container_width=True)
 
+
+def atualiza_verificada(carga_verificada, URL="https://apicarga.ons.org.br/prd/", areas=['N', 'NE', 'S', 'SECO'], endpoint="cargaverificada"):
+    inicio = carga_verificada.index[-1] + pd.Timedelta(minutes=30)
+    fim = datetime.now()
+
+    all_area_dfs = []
+
+    for area in areas:        
+        data_inicio = datetime.strptime(inicio.strftime('%Y-%m-%d'), '%Y-%m-%d')
+        data_fim = datetime.strptime(fim.strftime('%Y-%m-%d'), '%Y-%m-%d')
+        
+        dataframes_for_current_area = [] 
+        
+        inicio_atual = data_inicio
+        
+        while inicio_atual <= data_fim:
+            fim_atual = min(inicio_atual + pd.Timedelta(days=90), data_fim)
+
+            params = {
+                'cod_areacarga': area,
+                'dat_inicio': inicio_atual.strftime('%Y-%m-%d'),
+                'dat_fim': fim_atual.strftime('%Y-%m-%d')
+            }
+
+            url = f"{URL}/{endpoint}"
+            
+            try:
+                response = requests.get(url, params=params, timeout=30)
+                response.raise_for_status() 
+                
+                dados = response.json()
+                if dados: 
+                    df_chunk = pd.DataFrame(dados)
+                    dataframes_for_current_area.append(df_chunk)
+            
+            except requests.exceptions.RequestException as e:
+                print(f"  Erro na requisição para a área '{area}': {e}")
+
+            inicio_atual = fim_atual + pd.Timedelta(days=1)
+
+
+        if dataframes_for_current_area:
+            df_area = pd.concat(dataframes_for_current_area, ignore_index=True)
+            df_area.drop_duplicates(inplace=True) 
+            
+            df_area['cod_areacarga_ref'] = area
+            
+            all_area_dfs.append(df_area)
+
+    if all_area_dfs:
+        full_df = pd.concat(all_area_dfs, ignore_index=True)
+
+        full_df['din_referenciautc'] = pd.to_datetime(full_df['din_referenciautc']).dt.tz_localize(None) - pd.Timedelta(hours=3)
+
+        full_df.rename(columns={'din_referenciautc': 'datetime'}, inplace=True)
+
+        full_df = full_df[['datetime', 'cod_areacarga', 'val_cargaglobal']]
+
+        full_df = full_df.pivot(index='datetime', columns='cod_areacarga', values='val_cargaglobal')
+        full_df['SIN'] = full_df.sum(axis=1)
+        full_df = full_df[(full_df.index >= inicio) & (full_df['SIN'] != 0)].copy()
+
+        df_final = pd.concat([carga_verificada, full_df], axis=0)
+
+        return df_final
+    else:
+        return carga_verificada
+    
 
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
@@ -77,10 +150,10 @@ def main():
     col_11, col_12 = st.columns([3, 1])
 
     with col_12:
-        col_12_1, col_12_2, col_12_3 = st.columns([1, 1.2, 1])
+        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 1, 1])
 
         with col_12_1:
-            with st.popover("📆 **Data**"):
+            with st.popover("📆"):
                 st.session_state["dia_selecionado"] = st.date_input(
                     "Selecione o dia para plotagem:",
                     value=st.session_state["carga_verificada"].index.date[-1],
@@ -89,18 +162,22 @@ def main():
                 )
 
         with col_12_2:
-            with st.popover("📈 **Previsão**"):
+            with st.popover("📈"):
                 st.write("### Adicionar")
 
 
         with col_12_3:
-            with st.popover("📍 **Área**"):
+            with st.popover("📍"):
                 st.session_state["area_selecionada"] = st.selectbox(
                     "Selecione a área para plotagem:",
                     options=st.session_state["carga_verificada"].columns.tolist(),
                     index=0
                 )
 
+        with col_12_4:
+            if st.button("🔄"):
+                st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"], URL="https://apicarga.ons.org.br/prd/", areas=['SECO', 'S', 'NE', 'N'], endpoint="cargaverificada")
+                st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
 
         with st.container(height=424):
             st.markdown("""
