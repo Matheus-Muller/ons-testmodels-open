@@ -139,8 +139,80 @@ def atualiza_verificada(carga_verificada, URL="https://apicarga.ons.org.br/prd/"
         return carga_verificada
     
 
+def atualiza_programada(carga_programada, URL="https://apicarga.ons.org.br/prd/", areas=['N', 'NE', 'S', 'SECO'], endpoint="cargaprogramada"):
+    inicio = carga_programada.index[-1] + pd.Timedelta(minutes=30)
+    fim = datetime.now() + pd.Timedelta(days=1)
+
+    if carga_programada.index.date[-1] == (fim + pd.Timedelta(days=1)).date():
+        return carga_programada
+    else:
+        all_area_dfs = []
+
+        for area in areas:        
+            data_inicio = datetime.strptime(inicio.strftime('%Y-%m-%d'), '%Y-%m-%d')
+            data_fim = datetime.strptime(fim.strftime('%Y-%m-%d'), '%Y-%m-%d')
+            
+            dataframes_for_current_area = [] 
+            
+            inicio_atual = data_inicio
+            
+            while inicio_atual <= data_fim:
+                fim_atual = min(inicio_atual + pd.Timedelta(days=90), data_fim)
+
+                params = {
+                    'cod_areacarga': area,
+                    'dat_inicio': inicio_atual.strftime('%Y-%m-%d'),
+                    'dat_fim': fim_atual.strftime('%Y-%m-%d')
+                }
+
+                url = f"{URL}/{endpoint}"
+                
+                try:
+                    response = requests.get(url, params=params, timeout=30)
+                    response.raise_for_status() 
+                    
+                    dados = response.json()
+                    if dados: 
+                        df_chunk = pd.DataFrame(dados)
+                        dataframes_for_current_area.append(df_chunk)
+                
+                except requests.exceptions.RequestException as e:
+                    st.error(f"Erro na requisição para a área '{area}': {e}")
+
+                inicio_atual = fim_atual + pd.Timedelta(days=1)
+
+
+            if dataframes_for_current_area:
+                df_area = pd.concat(dataframes_for_current_area, ignore_index=True)
+                df_area.drop_duplicates(inplace=True) 
+                
+                df_area['cod_areacarga_ref'] = area
+                
+                all_area_dfs.append(df_area)
+
+        if all_area_dfs:
+            full_df = pd.concat(all_area_dfs, ignore_index=True)
+
+            full_df['din_referenciautc'] = pd.to_datetime(full_df['din_referenciautc']).dt.tz_localize(None) - pd.Timedelta(hours=3)
+
+            full_df.rename(columns={'din_referenciautc': 'datetime'}, inplace=True)
+
+            full_df = full_df[['datetime', 'cod_areacarga', 'val_cargaglobalprogramada']]
+
+            full_df = full_df.pivot(index='datetime', columns='cod_areacarga', values='val_cargaglobalprogramada')
+            full_df['SIN'] = full_df.sum(axis=1)
+            full_df = full_df[(full_df.index >= inicio) & (full_df['SIN'] != 0)].copy()
+
+            df_final = pd.concat([carga_programada, full_df], axis=0)
+
+            return df_final
+        else:
+            return carga_programada
+
+
 def atualizar_dados_e_data():
     st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"])
+    st.session_state["carga_programada"] = atualiza_programada(st.session_state["carga_programada"])
     st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
 
 
@@ -155,7 +227,7 @@ def main():
     col_11, col_12 = st.columns([3, 1])
 
     with col_12:
-        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1.8, 1, 1])
+        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 1, 1])
 
         with col_12_1:
             with st.popover("📆"):
@@ -167,7 +239,7 @@ def main():
                 )
 
         with col_12_2:
-            with st.popover(f"📍 **{st.session_state['area_selecionada']}**"):
+            with st.popover(f"📍"):
                 st.selectbox(
                     "Selecione a área para plotagem:",
                     options=st.session_state["carga_verificada"].columns.tolist(),
@@ -180,11 +252,6 @@ def main():
 
         with col_12_4:
             st.button("🔄", on_click=atualizar_dados_e_data)
-            #if st.button("🔄"):
-                #st.session_state["carga_verificada"] = atualiza_verificada(st.session_state["carga_verificada"])
-                #st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
-
-                #st.rerun()
 
         with st.container(height=424):
             st.markdown("""
