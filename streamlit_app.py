@@ -1,6 +1,7 @@
 # %%
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import requests
 import locale
@@ -16,7 +17,7 @@ def carrega_dados():
     carga_programada = pd.read_csv("./db/carga_programada.csv", sep=';', index_col=0, parse_dates=True)
 
     return carga_verificada, carga_programada
-
+ # %%
 
 def nome_regiao(area):
     if area == 'N':
@@ -69,6 +70,20 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_mape(carga_verificada, carga_programada, area, dia):
+    verificada = carga_verificada[carga_verificada.index.date == dia][area]
+    programada = carga_programada.loc[verificada.index, area]
+
+    y_true, y_pred = verificada.values, programada.values
+
+    mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+    
+    st.metric(
+        label=f"Programada",
+        value=f"{mape:.2f}%"
+    )
 
 
 def atualiza_verificada(carga_verificada, URL="https://apicarga.ons.org.br/prd/", areas=['N', 'NE', 'S', 'SECO'], endpoint="cargaverificada"):
@@ -261,6 +276,8 @@ def main():
                 """, unsafe_allow_html=True)
             
             st.write("")
+
+            plot_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
 
     with col_11:
         with st.container(height=500):
