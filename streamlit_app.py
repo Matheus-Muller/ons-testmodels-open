@@ -274,44 +274,59 @@ def adiciona_previsao(df, uploaded_file, modelo_nome, area, verifica_freq=True):
     df_previsao = df_previsao[[datetime_col, previsao_col]].copy()
 
     try:
-        df_previsao.index = pd.to_datetime(df_previsao[datetime_col])
+        df_previsao.index = pd.to_datetime(df_previsao[datetime_col]) 
         df_previsao.drop(columns=datetime_col, inplace=True)
     except Exception as e:
         st.error(f"Erro ao converter a coluna '{datetime_col}' para datetime: {e}")
         return df
     
     if df_previsao[previsao_col].dtype not in [float, int]:
-        st.error(f"A coluna '{previsao_col}' deve conter valores numéricos (float ou int).")
-        return df
+        try:
+            df_previsao[previsao_col] = df_previsao[previsao_col].str.replace(',', '.').astype(float)
+        except Exception as e:
+            st.error(f"A coluna '{previsao_col}' deve conter valores numéricos. Erro ao converter: {e}")
+            return df
+        
 
-    # Inferência da frequencia do dataframe com base no primeiro dia
     freq = pd.infer_freq(df_previsao[df_previsao.index.date == df_previsao.index.date[0]].index)
     
     if freq is None and verifica_freq:
         st.warning("Frequência não detectada automaticamente. Verifique o intervalo dos dados.")
         return df
     
-    if freq == 'h': 
-        datetime_index = pd.date_range(
-            start=df_previsao.index.min(),
-            end=df_previsao.index.max(),
-            freq='30min'
-        )
+    if freq == 'h' or freq == 'H':
+        dfs_semihora_por_dia = []
 
-        df_previsao = df_previsao.reindex(datetime_index)
-        
-        try:
-            df_previsao[previsao_col] = df_previsao[previsao_col].interpolate(method='spline', order=3)
+        for dia in df_previsao.index.normalize().unique():
+            df_dia_horario = df_previsao[df_previsao.index.date == dia.date()]
 
-            df_previsao_last_row = df_previsao[-1:].copy()
-            df_previsao_last_row[previsao_col] = df_previsao_last_row[previsao_col] - df_previsao_last_row[previsao_col] * 0.05
-            df_previsao_last_row.index = pd.to_datetime(df_previsao_last_row.index)
-            df_previsao_last_row.index = df_previsao_last_row.index + pd.Timedelta(minutes=30)
-            df_previsao = pd.concat([df_previsao, df_previsao_last_row], ignore_index=False)
+            datetime_index_dia = pd.date_range(
+                start=df_dia_horario.index.min(),
+                end=df_dia_horario.index.max(),
+                freq='30min'
+            )
+
+            df_dia_semihora = df_dia_horario.reindex(datetime_index_dia)
             
+            try:
+                df_dia_semihora[previsao_col] = df_dia_semihora[previsao_col].interpolate(method='linear')
+                
+                df_previsao_last_row = df_dia_semihora.iloc[[-1]].copy()
+                df_previsao_last_row[previsao_col] *= 0.95 
+                df_previsao_last_row.index += pd.Timedelta(minutes=30)
+                
+                df_dia_final = pd.concat([df_dia_semihora, df_previsao_last_row])
 
-        except Exception as e:
-            st.error(f"Erro na interpolação spline: {e}")
+                dfs_semihora_por_dia.append(df_dia_final)
+
+            except Exception as e:
+                st.error(f"Erro na interpolação para o dia {dia.date()}: {e}")
+                return df
+        
+        if dfs_semihora_por_dia:
+            df_previsao = pd.concat(dfs_semihora_por_dia)
+        else:
+            st.error("Não foi possível processar nenhum dia para a conversão semi-horária.")
             return df
 
     df_previsao['modelo'] = modelo_nome
@@ -403,7 +418,7 @@ def main():
                 uploaded_file = st.file_uploader("Selecione o arquivo CSV com as previsões", type="csv")
                 modelo_nome = st.text_input("Informe o nome do modelo")
                 area_nome = st.text_input("Informe a área do modelo")
-                opcao_verifica_freq = st.checkbox("Verificar frequência dos dados", value=True)
+                opcao_verifica_freq = st.checkbox("Verificar frequência dos dados", value=True, help="Marque esta opção se os dados não estiverem em formato semihorário")
                 add_previsao = st.button("Adicionar Previsão")
 
                 if add_previsao:
