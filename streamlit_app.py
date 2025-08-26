@@ -422,7 +422,7 @@ def main():
                 st.write("### Remover")
 
                 if not st.session_state["carga_prevista"].empty:
-                    modelo_nome_remover = st.text_input("Modelo a ser removido")
+                    modelo_nome_remover = st.selectbox("Modelo a ser removido", options=st.session_state["carga_prevista"]['modelo'].unique().tolist())
                     remover_area = st.selectbox("Área a ser removida", options=st.session_state["carga_prevista"][st.session_state["carga_prevista"]['modelo'] == modelo_nome_remover]['area'].unique().tolist())
                     
                     remover_previsao = st.button("Remover Previsão")
