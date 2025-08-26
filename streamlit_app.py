@@ -1,4 +1,3 @@
-# %%
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,7 +8,6 @@ from datetime import datetime
 
 locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil.1252')
 
-# %%
 
 @st.cache_data
 def carrega_dados():
@@ -17,7 +15,7 @@ def carrega_dados():
     carga_programada = pd.read_csv("./db/carga_programada.csv", sep=';', index_col=0, parse_dates=True)
 
     return carga_verificada, carga_programada
- # %%
+
 
 def nome_regiao(area):
     if area == 'N':
@@ -32,7 +30,7 @@ def nome_regiao(area):
         return 'SIN'
 
 
-def plot_carga(carga_verificada, carga_programada, area, dia):
+def plot_carga(carga_verificada, carga_programada, carga_prevista, area, dia):
     fig = go.Figure()
 
     regiao = nome_regiao(area)
@@ -56,6 +54,19 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
         marker=dict(size=4)
     ))
 
+    if not carga_prevista.empty:
+        plot_prevista = carga_prevista[(carga_prevista.index.date == dia) & (carga_prevista.area == area)]
+        for modelo in plot_prevista['modelo'].unique():
+            plot_modelo = plot_prevista[plot_prevista['modelo'] == modelo]
+            if not plot_modelo.empty:
+                fig.add_trace(go.Scatter(
+                    x=plot_modelo.index, y=plot_modelo['val_cargaprevista'],
+                    mode='lines+markers',
+                    name=f'{modelo}',
+                    line=dict(width=2),
+                    marker=dict(size=4)
+                ))
+
     fig.update_layout(
         title={
             'text': f"Carga Global do {regiao} em {dia.strftime('%d/%m/%Y')} ({dia.strftime('%A').capitalize()})",
@@ -72,18 +83,41 @@ def plot_carga(carga_verificada, carga_programada, area, dia):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_mape(carga_verificada, carga_programada, area, dia):
+def plot_mape(carga_verificada, carga_programada, carga_prevista, area, dia):
     verificada = carga_verificada[carga_verificada.index.date == dia][area]
     programada = carga_programada.loc[verificada.index, area]
 
     y_true, y_pred = verificada.values, programada.values
 
     mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-    
+
     st.metric(
-        label=f"Programada",
-        value=f"{mape:.2f}%"
+        label=f"**Programada**",
+        value=f"{mape:.2f}"
     )
+
+    mapes_prevista = {'modelo': [], 'mape': []}
+
+    if not carga_prevista.empty:
+        if area in carga_prevista['area'].values:
+            prevista = carga_prevista.loc[(carga_prevista.index.isin(verificada.index)) & (carga_prevista['area'] == area), ['modelo', 'val_cargaprevista']]
+
+            for modelo in prevista['modelo'].unique():
+                y_prev = prevista[prevista['modelo'] == modelo]['val_cargaprevista'].values
+                if len(y_prev) == 0:
+                    continue
+
+                mape_prev = np.mean(np.abs((y_true - y_prev) / y_true)) * 100
+
+                mapes_prevista['modelo'].append(modelo)
+                mapes_prevista['mape'].append(mape_prev)
+
+    if mapes_prevista:
+        for modelo, mape in zip(mapes_prevista['modelo'], mapes_prevista['mape']):
+            st.metric(
+                label=f"**{modelo}**",
+                value=f"{mape:.2f}"
+            )
 
 
 def atualiza_verificada(carga_verificada, URL="https://apicarga.ons.org.br/prd/", areas=['N', 'NE', 'S', 'SECO'], endpoint="cargaverificada"):
@@ -231,9 +265,111 @@ def atualizar_dados_e_data():
     st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
 
 
+def adiciona_previsao(df, uploaded_file, modelo_nome, area, verifica_freq=True):
+    df_previsao = pd.read_csv(uploaded_file, sep=';')
+
+    datetime_col = df_previsao.columns[0]
+    previsao_col = df_previsao.columns[1]
+
+    df_previsao = df_previsao[[datetime_col, previsao_col]].copy()
+
+    try:
+        df_previsao.index = pd.to_datetime(df_previsao[datetime_col])
+        df_previsao.drop(columns=datetime_col, inplace=True)
+    except Exception as e:
+        st.error(f"Erro ao converter a coluna '{datetime_col}' para datetime: {e}")
+        return df
+    
+    if df_previsao[previsao_col].dtype not in [float, int]:
+        st.error(f"A coluna '{previsao_col}' deve conter valores numéricos (float ou int).")
+        return df
+
+    # Inferência da frequencia do dataframe com base no primeiro dia
+    freq = pd.infer_freq(df_previsao[df_previsao.index.date == df_previsao.index.date[0]].index)
+    
+    if freq is None and verifica_freq:
+        st.warning("Frequência não detectada automaticamente. Verifique o intervalo dos dados.")
+        return df
+    
+    if freq == 'h': 
+        datetime_index = pd.date_range(
+            start=df_previsao.index.min(),
+            end=df_previsao.index.max(),
+            freq='30min'
+        )
+
+        df_previsao = df_previsao.reindex(datetime_index)
+        
+        try:
+            df_previsao[previsao_col] = df_previsao[previsao_col].interpolate(method='spline', order=3)
+
+            df_previsao_last_row = df_previsao[-1:].copy()
+            df_previsao_last_row[previsao_col] = df_previsao_last_row[previsao_col] - df_previsao_last_row[previsao_col] * 0.05
+            df_previsao_last_row.index = pd.to_datetime(df_previsao_last_row.index)
+            df_previsao_last_row.index = df_previsao_last_row.index + pd.Timedelta(minutes=30)
+            df_previsao = pd.concat([df_previsao, df_previsao_last_row], ignore_index=False)
+            
+
+        except Exception as e:
+            st.error(f"Erro na interpolação spline: {e}")
+            return df
+
+    df_previsao['modelo'] = modelo_nome
+    df_previsao['area'] = area
+
+    df_previsao = df_previsao.rename(columns={previsao_col: 'val_cargaprevista'})
+
+    intersecao = pd.DataFrame()
+
+    if not df.empty:
+        existe = df[(df['modelo'] == modelo_nome) & (df['area'] == area)]
+        intersecao = existe.index.intersection(df_previsao.index)
+
+    if not intersecao.empty:
+        st.warning(f"Já existem {len(intersecao)} registros do modelo '{modelo_nome}' para esses horários. Eles serão sobrescritos.")
+
+        mask = (
+            df.index.isin(intersecao) & 
+            (df['modelo'] == modelo_nome) & 
+            (df['area'] == area)
+        )
+
+        df = df[~mask]
+
+    df = pd.concat([df, df_previsao], ignore_index=False)
+
+    df['datetime'] = df.index
+    df = df.sort_values(by=['datetime', 'modelo']).drop(columns='datetime')
+
+    st.success(f"Previsões do modelo '{modelo_nome}' adicionadas com sucesso!")
+
+    return df
+
+
+def remove_previsao(df, modelo_nome, area):
+    df = df.copy()
+
+    mask = (df['modelo'] == modelo_nome) & (df['area'] == area)
+
+    if df[mask].empty:
+        st.warning(f"Nenhuma previsão encontrada para o modelo '{modelo_nome}'.")
+        return df
+
+    df = df[~mask]
+
+    df['datetime'] = df.index
+    df = df.sort_values(by=['datetime', 'modelo']).drop(columns='datetime')
+
+    st.success(f"Previsões do modelo '{modelo_nome}' removidas com sucesso para a área '{area}'!")
+
+    return df
+
+
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
         st.session_state["carga_verificada"], st.session_state["carga_programada"] = carrega_dados()
+    if "carga_prevista" not in st.session_state:
+        st.session_state["carga_prevista"] = pd.DataFrame()
     if "dia_selecionado" not in st.session_state:
         st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
     if "area_selecionada" not in st.session_state:
@@ -264,24 +400,61 @@ def main():
         with col_12_3:
             with st.popover("📈"):
                 st.write("### Adicionar")
+                uploaded_file = st.file_uploader("Selecione o arquivo CSV com as previsões", type="csv")
+                modelo_nome = st.text_input("Informe o nome do modelo")
+                area_nome = st.text_input("Informe a área do modelo")
+                opcao_verifica_freq = st.checkbox("Verificar frequência dos dados", value=True)
+                add_previsao = st.button("Adicionar Previsão")
+
+                if add_previsao:
+                    if uploaded_file is not None and modelo_nome and area_nome:
+                        st.session_state["carga_prevista"] = adiciona_previsao(
+                            st.session_state["carga_prevista"], uploaded_file, modelo_nome, area_nome, opcao_verifica_freq
+                        )
+
+                        st.rerun()
+                    else:
+                        st.warning("Por favor, selecione um arquivo CSV e informe o nome do modelo.")
+
+
+                st.divider()
+
+                st.write("### Remover")
+
+                if not st.session_state["carga_prevista"].empty:
+                    modelo_nome_remover = st.text_input("Modelo a ser removido")
+                    remover_area = st.selectbox("Área a ser removida", options=st.session_state["carga_prevista"][st.session_state["carga_prevista"]['modelo'] == modelo_nome_remover]['area'].unique().tolist())
+                    
+                    remover_previsao = st.button("Remover Previsão")
+
+                    if remover_previsao:
+                        if modelo_nome_remover is not None and remover_area is not None:
+                            st.session_state["carga_prevista"] = remove_previsao(st.session_state["carga_prevista"], modelo_nome_remover, remover_area)
+                            st.success(f"Previsões do modelo '{modelo_nome_remover}' removidas com sucesso para a área '{remover_area}'!")
+                            st.rerun()
+                        else:
+                            st.warning("Por favor, informe o nome do modelo a ser removido.")
 
         with col_12_4:
             st.button("🔄", on_click=atualizar_dados_e_data)
 
         with st.container(height=424):
-            st.markdown("""
-                <p style='text-align: center; margin-bottom: -1px; font-size: 20px;'>
-                    <strong>MAPE</strong>
-                </p>
-                """, unsafe_allow_html=True)
-            
-            st.write("")
+            _, col_mape, _ = st.columns([1, 2, 1])
 
-            plot_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
+            with col_mape:
+                st.markdown("""
+                    <p style='font-size: 20px;'>
+                        <strong>MAPE (%)</strong>
+                    </p>
+                    """, unsafe_allow_html=True)
+            
+                st.write("")
+
+                plot_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
 
     with col_11:
         with st.container(height=500):
-            plot_carga(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
+            plot_carga(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
 
 
 def relatorio():
