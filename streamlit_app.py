@@ -552,7 +552,46 @@ def main():
 
 
 def relatorio():
-    st.write("### Página de Relatório em construção ... ⌛")
+    if "inicio_relatorio" not in st.session_state:
+        st.session_state["inicio_relatorio"] = st.session_state["carga_verificada"].index.date[0]
+    if "fim_relatorio" not in st.session_state:
+        st.session_state["fim_relatorio"] = st.session_state["carga_verificada"].index.date[-1]
+
+    col_11, col_12, col_13, col_14 = st.columns(4)
+
+    with col_11:
+        st.date_input(
+            f"📆 **Início:**",
+            key="inicio_relatorio",
+            min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
+            max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
+        )
+
+    with col_12:
+        st.date_input(
+            f"📆 **Fim:**",
+            key="fim_relatorio",
+            min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
+            max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
+        )
+
+    with col_13:
+        area = st.selectbox(
+            "📍 **Área:**",
+            options=st.session_state["carga_verificada"].columns.tolist()
+        )
+
+    with col_14:
+        if not st.session_state["carga_prevista"].empty:
+            modelos = st.multiselect(
+                "🤖 **Modelos:**",
+                options=st.session_state["carga_prevista"]["modelo"].unique().tolist() + ["Programada"]
+            )
+        else:
+            modelos = st.multiselect(
+                "🤖 **Modelos:**",
+                options=["Programada"]
+            )
 
 
 if __name__ == "__main__":
