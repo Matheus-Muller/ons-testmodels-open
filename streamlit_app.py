@@ -378,7 +378,7 @@ def main():
     col_11, col_12 = st.columns([3, 1])
 
     with col_12:
-        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 1, 1])
+        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 0.8, 1.68])
 
         with col_12_1:
             with st.popover("📆"):
@@ -386,18 +386,18 @@ def main():
                     "Selecione o dia para plotagem:",
                     key="dia_selecionado",
                     min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
-                    max_value=max(pd.unique(st.session_state["carga_verificada"].index.date))
+                    max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
                 )
 
-        with col_12_2:
-            with st.popover(f"📍"):
+        with col_12_4:
+            with st.popover(f"📍 **{st.session_state['area_selecionada']}**"):
                 st.selectbox(
                     "Selecione a área para plotagem:",
                     options=st.session_state["carga_verificada"].columns.tolist(),
                     key="area_selecionada",
                 )
 
-        with col_12_3:
+        with col_12_2:
             with st.popover("📈"):
                 st.write("### Adicionar")
                 uploaded_file = st.file_uploader("Selecione o arquivo CSV com as previsões", type="csv")
@@ -435,11 +435,11 @@ def main():
                         else:
                             st.warning("Por favor, informe o nome do modelo a ser removido.")
 
-        with col_12_4:
-            st.button("🔄", on_click=atualizar_dados_e_data)
+        with col_12_3:
+            st.button("🔄", on_click=atualizar_dados_e_data, help='Atualizar')
 
-        with st.container(height=424):
-            _, col_mape, _ = st.columns([1, 2, 1])
+        with st.container(height=444):
+            _, col_mape, _ = st.columns([1, 1.5, 1])
 
             with col_mape:
                 st.markdown("""
@@ -447,8 +447,6 @@ def main():
                         <strong>MAPE (%)</strong>
                     </p>
                     """, unsafe_allow_html=True)
-            
-                st.write("")
 
                 plot_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
 
