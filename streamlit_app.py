@@ -17,6 +17,62 @@ def carrega_dados():
     return carga_verificada, carga_programada
 
 
+@st.cache_data
+def set_feriados():
+    feriados = {
+        # 2024
+        "2024-01-01": "Confraternização Universal",
+        "2024-02-12": "Carnaval",
+        "2024-02-13": "Carnaval",
+        "2024-02-14": "Carnaval",
+        "2024-03-29": "Sexta-feira Santa",
+        "2024-04-21": "Tiradentes",
+        "2024-05-01": "Dia do Trabalho",
+        "2024-05-30": "Corpus Christi",
+        "2024-05-31": "Ponte",
+        "2024-09-07": "Independência do Brasil",
+        "2024-10-12": "Nossa Senhora Aparecida",
+        "2024-11-02": "Finados",
+        "2024-11-15": "Proclamação da República",
+        "2024-12-25": "Natal",
+
+        # 2025
+        "2025-01-01": "Confraternização Universal",
+        "2025-03-03": "Carnaval",
+        "2025-03-04": "Carnaval",
+        "2025-03-05": "Carnaval",
+        "2025-04-18": "Sexta-feira Santa",
+        "2025-04-21": "Tiradentes",
+        "2025-05-01": "Dia do Trabalho",
+        "2025-05-02": "Ponte",
+        "2025-06-19": "Corpus Christi",
+        "2025-06-20": "Ponte",
+        "2025-09-07": "Independência do Brasil",
+        "2025-10-12": "Nossa Senhora Aparecida",
+        "2025-11-02": "Finados",
+        "2025-11-15": "Proclamação da República",
+        "2025-12-25": "Natal",
+        "2025-12-26": "Ponte"
+    }
+
+    feriados = {pd.to_datetime(k).date(): v for k, v in feriados.items()}
+
+    return feriados
+
+
+def imprime_feriados(feriados, ano):
+    feriados_filtrados = {date: name for date, name in feriados.items() if date.year == ano}
+
+    if not feriados_filtrados:
+        st.info("Nenhum feriado disponível para o ano selecionado.")
+        return
+
+    feriados_df = pd.DataFrame(list(feriados_filtrados.items()), columns=['Data', 'Feriado'])
+    feriados_df['Data'] = feriados_df['Data'].apply(lambda x: x.strftime('%d/%m/%Y (%A)'))
+
+    st.table(feriados_df)
+
+
 def nome_regiao(area):
     if area == 'N':
         return 'Norte'
@@ -30,8 +86,17 @@ def nome_regiao(area):
         return 'SIN'
 
 
-def plot_carga(carga_verificada, carga_programada, carga_prevista, area, dia):
+def plot_carga(carga_verificada, carga_programada, carga_prevista, area, dia, feriados):
     fig = go.Figure()
+
+    feriado = feriados.get(dia)
+
+    if feriado is not None and feriado == "Ponte":
+        titulo_feriado = f"- Ponte"
+    elif feriado is not None:
+        titulo_feriado = f"- Feriado"
+    else:
+        titulo_feriado = ""
 
     regiao = nome_regiao(area)
 
@@ -69,7 +134,7 @@ def plot_carga(carga_verificada, carga_programada, carga_prevista, area, dia):
 
     fig.update_layout(
         title={
-            'text': f"Carga Global do {regiao} em {dia.strftime('%d/%m/%Y')} ({dia.strftime('%A').capitalize()})",
+            'text': f"Carga Global do {regiao} em {dia.strftime('%d/%m/%Y')} ({dia.strftime('%A').capitalize()}) {titulo_feriado}",
             'font': {'size': 20},
             'x': 0.5,
             'xanchor': 'center'
@@ -389,11 +454,13 @@ def main():
         st.session_state["dia_selecionado"] = st.session_state["carga_verificada"].index.date[-1]
     if "area_selecionada" not in st.session_state:
         st.session_state["area_selecionada"] = 'SIN'
+    if "feriados" not in st.session_state:
+        st.session_state["feriados"] = set_feriados()
 
     col_11, col_12 = st.columns([3, 1])
 
     with col_12:
-        col_12_1, col_12_2, col_12_3, col_12_4 = st.columns([1, 1, 0.8, 1.68])
+        col_12_1, col_12_2, col_12_3, col_12_4, col_12_5 = st.columns([1, 1, 1, 1, 0.9])
 
         with col_12_1:
             with st.popover("📆"):
@@ -402,14 +469,6 @@ def main():
                     key="dia_selecionado",
                     min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
                     max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
-                )
-
-        with col_12_4:
-            with st.popover(f"📍 **{st.session_state['area_selecionada']}**"):
-                st.selectbox(
-                    "Selecione a área para plotagem:",
-                    options=st.session_state["carga_verificada"].columns.tolist(),
-                    key="area_selecionada",
                 )
 
         with col_12_2:
@@ -451,7 +510,29 @@ def main():
                             st.warning("Por favor, informe o nome do modelo a ser removido.")
 
         with col_12_3:
+            with st.popover(f"📍"):
+                st.selectbox(
+                    "Selecione a área para plotagem:",
+                    options=st.session_state["carga_verificada"].columns.tolist(),
+                    key="area_selecionada",
+                )
+
+        with col_12_4:
+            with st.popover("🎉"):
+                st.write("### Feriados")
+
+                ano_feriados = st.selectbox(
+                    "Selecione o ano para exibir os feriados:",
+                    options=st.session_state["carga_verificada"].index.year.unique().tolist(),
+                    index=len(st.session_state["carga_verificada"].index.year.unique().tolist()) - 1
+                )
+
+                imprime_feriados(st.session_state["feriados"], ano_feriados)
+
+
+        with col_12_5:
             st.button("🔄", on_click=atualizar_dados_e_data, help='Atualizar')
+            
 
         with st.container(height=444):
             _, col_mape, _ = st.columns([1, 1.5, 1])
@@ -467,7 +548,7 @@ def main():
 
     with col_11:
         with st.container(height=500):
-            plot_carga(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"])
+            plot_carga(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], st.session_state["area_selecionada"], st.session_state["dia_selecionado"], st.session_state["feriados"])
 
 
 def relatorio():
