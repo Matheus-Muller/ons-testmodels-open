@@ -445,6 +445,58 @@ def remove_previsao(df, modelo_nome, area):
     return df
 
 
+def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
+    verificada = verificada[(verificada.index.date >= inicio) & (verificada.index.date <= fim)][[area]]
+    programada = programada[(programada.index.date >= inicio) & (programada.index.date <= fim)][[area]]
+
+    verificada = verificada.rename(columns={area: 'val_cargaglobal'})
+    verificada['modelo'] = "Verificada"
+
+    programada = programada.rename(columns={area: 'val_cargaglobal'})
+    programada['modelo'] = "Programada"
+
+    df_concated = pd.concat([verificada, programada]).sort_index()
+
+    if not prevista.empty:
+        prevista = prevista[(prevista.index.date >= inicio) & (prevista.index.date <= fim) & (prevista['area'] == area) & (prevista['modelo'].isin(modelos))][['modelo', 'val_cargaprevista']]
+        prevista = prevista.rename(columns={'val_cargaprevista': 'val_cargaglobal'})
+
+        df_concated = pd.concat([df_concated, prevista]).sort_index()
+
+    resultados = {'dia': [], 'modelo': [], 'mape': []}
+
+    df_concated['dia'] = df_concated.index.date
+
+    resultados = {'dia': [], 'modelo': [], 'mape': []}
+    
+    for dia in sorted(df_concated['dia'].unique()):
+        df_dia = df_concated[df_concated['dia'] == dia]
+        
+        verificada_dia = df_dia[df_dia['modelo'] == 'Verificada']['val_cargaglobal'].squeeze()
+        
+        modelos_a_avaliar = df_dia[df_dia['modelo'] != 'Verificada']['modelo'].unique()
+
+        for nome_modelo in modelos_a_avaliar:
+            modelo_dia = df_dia[df_dia['modelo'] == nome_modelo]['val_cargaglobal'].squeeze()
+
+            dados_combinados = pd.concat([verificada_dia.rename('verificada'), modelo_dia.rename('modelo')], axis=1).dropna()
+
+            dados_calculo = dados_combinados[dados_combinados['verificada'] != 0]
+
+            mape = np.nan  
+            if not dados_calculo.empty:
+                erro_percentual_abs = np.abs((dados_calculo['verificada'] - dados_calculo['modelo']) / dados_calculo['verificada'])
+                mape = np.mean(erro_percentual_abs) * 100
+            
+            resultados['dia'].append(dia)
+            resultados['modelo'].append(nome_modelo)
+            resultados['mape'].append(mape)
+
+    df_resultados = pd.DataFrame(resultados).sort_values(by=['dia', 'modelo']).reset_index(drop=True)
+    
+    return df_resultados
+
+
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
         st.session_state["carga_verificada"], st.session_state["carga_programada"] = carrega_dados()
@@ -552,27 +604,24 @@ def main():
 
 
 def relatorio():
-    if "inicio_relatorio" not in st.session_state:
-        st.session_state["inicio_relatorio"] = st.session_state["carga_verificada"].index.date[0]
-    if "fim_relatorio" not in st.session_state:
-        st.session_state["fim_relatorio"] = st.session_state["carga_verificada"].index.date[-1]
-
     col_11, col_12, col_13, col_14 = st.columns(4)
 
     with col_11:
-        st.date_input(
+        inicio_relatorio = st.date_input(
             f"📆 **Início:**",
             key="inicio_relatorio",
             min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
             max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
+            value=min(pd.unique(st.session_state["carga_verificada"].index.date))
         )
 
     with col_12:
-        st.date_input(
+        fim_relatorio = st.date_input(
             f"📆 **Fim:**",
             key="fim_relatorio",
             min_value=min(pd.unique(st.session_state["carga_verificada"].index.date)),
             max_value=max(pd.unique(st.session_state["carga_verificada"].index.date)),
+            value=max(pd.unique(st.session_state["carga_verificada"].index.date))
         )
 
     with col_13:
@@ -592,6 +641,9 @@ def relatorio():
                 "🤖 **Modelos:**",
                 options=["Programada"]
             )
+
+    if st.button("Gerar Relatório"):
+        st.write(calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio))
 
 
 if __name__ == "__main__":
