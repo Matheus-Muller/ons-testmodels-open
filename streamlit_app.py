@@ -3,10 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
-import locale
 from datetime import datetime
-
-locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil.1252')
 
 
 @st.cache_data
