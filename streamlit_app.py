@@ -442,56 +442,53 @@ def remove_previsao(df, modelo_nome, area):
     return df
 
 
+def mape(y_true, y_pred):
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    mask = y_true != 0
+    if mask.sum() == 0:
+        return np.nan
+    return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+    
+
 def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
     verificada = verificada[(verificada.index.date >= inicio) & (verificada.index.date <= fim)][[area]]
     programada = programada[(programada.index.date >= inicio) & (programada.index.date <= fim)][[area]]
 
     verificada = verificada.rename(columns={area: 'val_cargaglobal'})
-    verificada['modelo'] = "Verificada"
 
-    programada = programada.rename(columns={area: 'val_cargaglobal'})
+    programada = programada.rename(columns={area: 'val_cargaprevista'})
     programada['modelo'] = "Programada"
 
-    df_concated = pd.concat([verificada, programada]).sort_index()
+    previsoes_modelos = programada.copy()
 
     if not prevista.empty:
-        prevista = prevista[(prevista.index.date >= inicio) & (prevista.index.date <= fim) & (prevista['area'] == area) & (prevista['modelo'].isin(modelos))][['modelo', 'val_cargaprevista']]
-        prevista = prevista.rename(columns={'val_cargaprevista': 'val_cargaglobal'})
+        prevista = prevista[(prevista.index.date >= inicio) & (prevista.index.date <= fim) & (prevista['area'] == area)][['modelo', 'val_cargaprevista']]
 
-        df_concated = pd.concat([df_concated, prevista]).sort_index()
+        previsoes_modelos = pd.concat([previsoes_modelos, prevista]).sort_index()
 
-    resultados = {'dia': [], 'modelo': [], 'mape': []}
+    previsoes_modelos = previsoes_modelos[previsoes_modelos['modelo'].isin(modelos)]
 
-    df_concated['dia'] = df_concated.index.date
+    resultados = []
+    resultado_df = []
 
-    resultados = {'dia': [], 'modelo': [], 'mape': []}
-    
-    for dia in sorted(df_concated['dia'].unique()):
-        df_dia = df_concated[df_concated['dia'] == dia]
-        
-        verificada_dia = df_dia[df_dia['modelo'] == 'Verificada']['val_cargaglobal'].squeeze()
-        
-        modelos_a_avaliar = df_dia[df_dia['modelo'] != 'Verificada']['modelo'].unique()
+    if not previsoes_modelos.empty:
+        previsoes_modelos['dia'] = previsoes_modelos.index.date
 
-        for nome_modelo in modelos_a_avaliar:
-            modelo_dia = df_dia[df_dia['modelo'] == nome_modelo]['val_cargaglobal'].squeeze()
 
-            dados_combinados = pd.concat([verificada_dia.rename('verificada'), modelo_dia.rename('modelo')], axis=1).dropna()
+        for (dia, modelo), grupo in previsoes_modelos.groupby(['dia', 'modelo']):
+            if not grupo.empty:
+                verificada_dia = verificada[verificada.index.date == dia]
+                mape_val = mape(verificada_dia['val_cargaglobal'], grupo.loc[verificada_dia.index, 'val_cargaprevista'])
+                resultados.append({
+                    'dia': dia,
+                    'modelo': modelo,
+                    'mape': mape_val,
+                })
 
-            dados_calculo = dados_combinados[dados_combinados['verificada'] != 0]
+        resultado_df = pd.DataFrame(resultados)
+        resultado_df.sort_values(by=['dia', 'modelo'], inplace=True)
 
-            mape = np.nan  
-            if not dados_calculo.empty:
-                erro_percentual_abs = np.abs((dados_calculo['verificada'] - dados_calculo['modelo']) / dados_calculo['verificada'])
-                mape = np.mean(erro_percentual_abs) * 100
-            
-            resultados['dia'].append(dia)
-            resultados['modelo'].append(nome_modelo)
-            resultados['mape'].append(mape)
-
-    df_resultados = pd.DataFrame(resultados).sort_values(by=['dia', 'modelo']).reset_index(drop=True)
-    
-    return df_resultados
+    return resultado_df
 
 
 def main():
@@ -679,3 +676,82 @@ if __name__ == "__main__":
 
     else:
         st.error("Opção inválida. Por favor, escolha 'Dashboard' ou 'Relatório'.")
+
+
+# Testes
+
+# %%
+def carrega_dados():
+    carga_verificada = pd.read_csv("./db/carga_verificada.csv", sep=';', index_col=0, parse_dates=True)
+    carga_programada = pd.read_csv("./db/carga_programada.csv", sep=';', index_col=0, parse_dates=True)
+
+    return carga_verificada, carga_programada
+
+verificada, programada = carrega_dados()
+
+# %%
+
+lgbm = pd.read_csv("./ignore/LGBM_FeriadosTratados.csv", sep=';', index_col=0, parse_dates=True)
+xgb = pd.read_csv("./ignore/XGB_Feriados_Pesos.csv", sep=';', index_col=0, parse_dates=True)
+
+# %%
+
+lgbm['modelo'] = 'LGBM'
+xgb['modelo'] = 'XGB'
+
+prevista = pd.concat([lgbm, xgb]).sort_index()
+
+# %%
+
+area = 'S'
+
+programada_filtrada = programada[[area]]
+programada_filtrada = programada_filtrada.rename(columns={area: 'carga_prevista'})
+programada_filtrada['modelo'] = 'Programada'
+programada_filtrada = programada_filtrada['2025-01-01'::2]
+
+# %%
+
+prevista = pd.concat([prevista, programada_filtrada]).sort_index()
+
+# %%
+
+inicio = pd.to_datetime('2025-01-01').date()
+fim = pd.to_datetime('2025-08-14').date()
+modelos = ['LGBM', 'XGB', 'Programada']
+
+verificada = verificada[[area]]['2025-01-01'::2].rename(columns={area: 'carga_verificada'})
+
+# %%
+
+prevista = prevista[(prevista.index.date >= inicio) & (prevista.index.date <= fim) & (prevista['modelo'].isin(modelos))]
+prevista['dia'] = prevista.index.date
+
+# %%
+
+import numpy as np
+
+def mape(y_true, y_pred):
+        y_true, y_pred = np.array(y_true), np.array(y_pred)
+        # Evitar divisão por zero
+        mask = y_true != 0
+        if mask.sum() == 0:
+            return np.nan
+        return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+
+resultados = []
+
+for (dia, modelo), grupo in prevista.groupby(['dia', 'modelo']):
+    if not grupo.empty:
+        verificada_dia = verificada[verificada.index.date == dia]
+        mape_val = mape(verificada_dia['carga_verificada'], grupo.loc[verificada_dia.index, 'carga_prevista'])
+        resultados.append({
+            'dia': dia,
+            'modelo': modelo,
+            'mape': mape_val,
+        })
+
+resultado_df = pd.DataFrame(resultados)
+resultado_df.sort_values(by=['dia', 'modelo'], inplace=True)
+
+# %%
