@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
+import seaborn as sns
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 
@@ -491,6 +493,39 @@ def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
     return resultado_df
 
 
+def plot_mape_relatorio(mape):
+    mapes_df = mape.copy()
+    mapes_df['mes_ano'] = mapes_df['dia'].apply(lambda x: x.strftime('%Y-%m'))
+
+    traces = []
+    for modelo in mapes_df['modelo'].unique():
+        df_modelo = mapes_df[mapes_df['modelo'] == modelo]
+        trace = go.Box(
+            y=df_modelo['mape'],
+            x=df_modelo['mes_ano'],
+            name=modelo,
+            boxmean='sd',
+            hovertext=pd.to_datetime(df_modelo['dia']).dt.strftime('%Y-%m-%d'),  
+            hoverinfo='text+y+name'  
+        )
+        traces.append(trace)
+    layout = dict(
+        title={
+            'text': "MAPE Mensal por modelo",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20}
+        },
+        xaxis_title="Mês-Ano",
+        yaxis_title="MAPE (%)",
+        legend_title="Modelos",
+        boxmode='group'  
+    )
+
+    fig = go.Figure(data=traces, layout=layout)
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
         st.session_state["carga_verificada"], st.session_state["carga_programada"] = carrega_dados()
@@ -598,6 +633,9 @@ def main():
 
 
 def relatorio():
+    if "mape_relatorio" not in st.session_state:
+        st.session_state["mape_relatorio"] = pd.DataFrame()
+
     col_11, col_12, col_13, col_14 = st.columns(4)
 
     with col_11:
@@ -637,8 +675,19 @@ def relatorio():
             )
 
     if st.button("Gerar Relatório"):
-        st.write(calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio))
+        st.session_state["mape_relatorio"] = calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio)
 
+        st.divider()
+
+        col_21, col_22 = st.columns([3, 1])
+
+        with col_21:
+            with st.container(height=500):
+                plot_mape_relatorio(st.session_state["mape_relatorio"])
+
+        with col_22:
+            with st.container(height=500):
+                st.write("### MAPE Médio")
 
 if __name__ == "__main__":
     st.set_page_config(
@@ -676,82 +725,3 @@ if __name__ == "__main__":
 
     else:
         st.error("Opção inválida. Por favor, escolha 'Dashboard' ou 'Relatório'.")
-
-
-# Testes
-
-# %%
-def carrega_dados():
-    carga_verificada = pd.read_csv("./db/carga_verificada.csv", sep=';', index_col=0, parse_dates=True)
-    carga_programada = pd.read_csv("./db/carga_programada.csv", sep=';', index_col=0, parse_dates=True)
-
-    return carga_verificada, carga_programada
-
-verificada, programada = carrega_dados()
-
-# %%
-
-lgbm = pd.read_csv("./ignore/LGBM_FeriadosTratados.csv", sep=';', index_col=0, parse_dates=True)
-xgb = pd.read_csv("./ignore/XGB_Feriados_Pesos.csv", sep=';', index_col=0, parse_dates=True)
-
-# %%
-
-lgbm['modelo'] = 'LGBM'
-xgb['modelo'] = 'XGB'
-
-prevista = pd.concat([lgbm, xgb]).sort_index()
-
-# %%
-
-area = 'S'
-
-programada_filtrada = programada[[area]]
-programada_filtrada = programada_filtrada.rename(columns={area: 'carga_prevista'})
-programada_filtrada['modelo'] = 'Programada'
-programada_filtrada = programada_filtrada['2025-01-01'::2]
-
-# %%
-
-prevista = pd.concat([prevista, programada_filtrada]).sort_index()
-
-# %%
-
-inicio = pd.to_datetime('2025-01-01').date()
-fim = pd.to_datetime('2025-08-14').date()
-modelos = ['LGBM', 'XGB', 'Programada']
-
-verificada = verificada[[area]]['2025-01-01'::2].rename(columns={area: 'carga_verificada'})
-
-# %%
-
-prevista = prevista[(prevista.index.date >= inicio) & (prevista.index.date <= fim) & (prevista['modelo'].isin(modelos))]
-prevista['dia'] = prevista.index.date
-
-# %%
-
-import numpy as np
-
-def mape(y_true, y_pred):
-        y_true, y_pred = np.array(y_true), np.array(y_pred)
-        # Evitar divisão por zero
-        mask = y_true != 0
-        if mask.sum() == 0:
-            return np.nan
-        return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
-
-resultados = []
-
-for (dia, modelo), grupo in prevista.groupby(['dia', 'modelo']):
-    if not grupo.empty:
-        verificada_dia = verificada[verificada.index.date == dia]
-        mape_val = mape(verificada_dia['carga_verificada'], grupo.loc[verificada_dia.index, 'carga_prevista'])
-        resultados.append({
-            'dia': dia,
-            'modelo': modelo,
-            'mape': mape_val,
-        })
-
-resultado_df = pd.DataFrame(resultados)
-resultado_df.sort_values(by=['dia', 'modelo'], inplace=True)
-
-# %%
