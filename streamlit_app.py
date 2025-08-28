@@ -526,6 +526,19 @@ def plot_mape_relatorio(mape):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def plot_mape_medio(mapes):
+    if not mapes.empty:
+        mape_medio = mapes.groupby('modelo')['mape'].mean().reset_index()
+
+        for modelo in mape_medio['modelo']:
+            mape = mape_medio[mape_medio['modelo'] == modelo]['mape'].values[0]
+
+            st.metric(
+                label=f"**{modelo}**",
+                value=f"{mape:.2f}%"
+            )
+
+
 def main():
     if "carga_verificada" not in st.session_state or "carga_programada" not in st.session_state:
         st.session_state["carga_verificada"], st.session_state["carga_programada"] = carrega_dados()
@@ -687,7 +700,20 @@ def relatorio():
 
         with col_22:
             with st.container(height=500):
-                st.write("### MAPE Médio")
+                _, col_mape_medio, _ = st.columns([1, 1.5, 1])
+
+                with col_mape_medio:
+                    st.markdown(
+                        """
+                        <p style='font-size: 20px;'>
+                            <strong>MAPE Médio</strong>
+                        </p>
+                        """, 
+                        unsafe_allow_html=True
+                    )
+
+                    plot_mape_medio(st.session_state["mape_relatorio"])
+
 
 if __name__ == "__main__":
     st.set_page_config(
