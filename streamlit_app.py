@@ -54,22 +54,26 @@ def set_feriados():
         "2025-12-26": "Ponte"
     }
 
-    feriados = {pd.to_datetime(k).date(): v for k, v in feriados.items()}
+    feriados_df = pd.DataFrame(list(feriados.items()), columns=['data', 'feriado'])
+    feriados_df.set_index('data', inplace=True)
+    feriados_df.index = pd.to_datetime(feriados_df.index)
+    feriados_df.index.name = None
 
-    return feriados
+    return feriados_df
 
 
 def imprime_feriados(feriados, ano):
-    feriados_filtrados = {date: name for date, name in feriados.items() if date.year == ano}
+    feriados_filtrados = feriados[feriados.index.year == ano].copy()
 
-    if not feriados_filtrados:
+    if feriados_filtrados.empty:
         st.info("Nenhum feriado disponível para o ano selecionado.")
         return
 
-    feriados_df = pd.DataFrame(list(feriados_filtrados.items()), columns=['Data', 'Feriado'])
-    feriados_df['Data'] = feriados_df['Data'].apply(lambda x: x.strftime('%d/%m/%Y (%A)'))
+    feriados_filtrados['Dia da Semana'] = feriados_filtrados.index.strftime('%A')
+    feriados_filtrados.rename(columns={'feriado': 'Feriado'}, inplace=True)
+    feriados_filtrados.index = feriados_filtrados.index.strftime('%d/%m/%Y')
 
-    st.table(feriados_df)
+    st.table(feriados_filtrados[['Feriado', 'Dia da Semana']])
 
 
 def nome_regiao(area):
@@ -88,7 +92,10 @@ def nome_regiao(area):
 def plot_carga(carga_verificada, carga_programada, carga_prevista, area, dia, feriados):
     fig = go.Figure()
 
-    feriado = feriados.get(dia)
+    try:
+        feriado = feriados.loc[pd.to_datetime(dia), 'feriado']
+    except KeyError:
+        feriado = None
 
     if feriado is not None and feriado == "Ponte":
         titulo_feriado = f"- Ponte"
@@ -452,7 +459,7 @@ def mape(y_true, y_pred):
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
     
 
-def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
+def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim, tipo_dia, feriados):
     verificada = verificada[(verificada.index.date >= inicio) & (verificada.index.date <= fim)][[area]]
     programada = programada[(programada.index.date >= inicio) & (programada.index.date <= fim)][[area]]
 
@@ -468,14 +475,29 @@ def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
 
         previsoes_modelos = pd.concat([previsoes_modelos, prevista]).sort_index()
 
+
     previsoes_modelos = previsoes_modelos[previsoes_modelos['modelo'].isin(modelos)]
 
     resultados = []
-    resultado_df = []
+    resultado_df = pd.DataFrame()
 
     if not previsoes_modelos.empty:
-        previsoes_modelos['dia'] = previsoes_modelos.index.date
+        previsoes_modelos['dia'] = pd.to_datetime(previsoes_modelos.index).date
 
+        if "Feriado" in tipo_dia:
+            previsoes_modelos = previsoes_modelos[pd.to_datetime(previsoes_modelos['dia']).isin(feriados.index)]
+        else:
+            previsoes_modelos = previsoes_modelos[~pd.to_datetime(previsoes_modelos['dia']).isin(feriados.index)]
+
+        if "Dia Útil" in tipo_dia and "Fim de Semana" in tipo_dia:
+            pass
+        elif "Dia Útil" in tipo_dia:
+            previsoes_modelos = previsoes_modelos[previsoes_modelos.index.dayofweek < 5]
+        elif "Fim de Semana" in tipo_dia:
+            previsoes_modelos = previsoes_modelos[previsoes_modelos.index.dayofweek >= 5]
+        else:
+            return resultado_df
+        
 
         for (dia, modelo), grupo in previsoes_modelos.groupby(['dia', 'modelo']):
             if not grupo.empty:
@@ -488,42 +510,45 @@ def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim):
                 })
 
         resultado_df = pd.DataFrame(resultados)
-        resultado_df.sort_values(by=['dia', 'modelo'], inplace=True)
+
+        if not resultado_df.empty:
+            resultado_df.sort_values(by=['dia', 'modelo'], inplace=True)
 
     return resultado_df
 
 
 def plot_mape_relatorio(mape):
-    mapes_df = mape.copy()
-    mapes_df['mes_ano'] = mapes_df['dia'].apply(lambda x: x.strftime('%Y-%m'))
+    if not mape.empty:
+        mapes_df = mape.copy()
+        mapes_df['mes_ano'] = mapes_df['dia'].apply(lambda x: x.strftime('%Y-%m'))
 
-    traces = []
-    for modelo in mapes_df['modelo'].unique():
-        df_modelo = mapes_df[mapes_df['modelo'] == modelo]
-        trace = go.Box(
-            y=df_modelo['mape'],
-            x=df_modelo['mes_ano'],
-            name=modelo,
-            boxmean='sd',
-            hovertext=pd.to_datetime(df_modelo['dia']).dt.strftime('%Y-%m-%d'),  
-            hoverinfo='text+y+name'  
+        traces = []
+        for modelo in mapes_df['modelo'].unique():
+            df_modelo = mapes_df[mapes_df['modelo'] == modelo]
+            trace = go.Box(
+                y=df_modelo['mape'],
+                x=df_modelo['mes_ano'],
+                name=modelo,
+                boxmean='sd',
+                hovertext=pd.to_datetime(df_modelo['dia']).dt.strftime('%Y-%m-%d'),  
+                hoverinfo='text+y+name'  
+            )
+            traces.append(trace)
+        layout = dict(
+            title={
+                'text': "MAPE Mensal por modelo",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 20}
+            },
+            xaxis_title="Mês-Ano",
+            yaxis_title="MAPE (%)",
+            legend_title="Modelos",
+            boxmode='group'  
         )
-        traces.append(trace)
-    layout = dict(
-        title={
-            'text': "MAPE Mensal por modelo",
-            'x': 0.5,
-            'xanchor': 'center',
-            'font': {'size': 20}
-        },
-        xaxis_title="Mês-Ano",
-        yaxis_title="MAPE (%)",
-        legend_title="Modelos",
-        boxmode='group'  
-    )
 
-    fig = go.Figure(data=traces, layout=layout)
-    st.plotly_chart(fig, use_container_width=True)
+        fig = go.Figure(data=traces, layout=layout)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def plot_mape_medio(mapes):
@@ -649,7 +674,7 @@ def relatorio():
     if "mape_relatorio" not in st.session_state:
         st.session_state["mape_relatorio"] = pd.DataFrame()
 
-    col_11, col_12, col_13, col_14 = st.columns(4)
+    col_11, col_12, col_13 = st.columns(3)
 
     with col_11:
         inicio_relatorio = st.date_input(
@@ -675,7 +700,9 @@ def relatorio():
             options=st.session_state["carga_verificada"].columns.tolist()
         )
 
-    with col_14:
+    col_filtro_tipodia, col_filtro_modelos, col_botao_relatorio = st.columns([3, 3, 0.35])
+
+    with col_filtro_modelos:
         if not st.session_state["carga_prevista"].empty:
             modelos = st.multiselect(
                 "🤖 **Modelos:**",
@@ -687,10 +714,21 @@ def relatorio():
                 options=["Programada"]
             )
 
-    if st.button("Gerar Relatório"):
-        st.session_state["mape_relatorio"] = calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio)
+    with col_filtro_tipodia:
+        tipo_dia = st.multiselect(
+            "🗓️ **Tipo de Dia:**",
+            options=["Dia Útil", "Fim de Semana", "Feriado"]
+        )
 
-        st.divider()
+    with col_botao_relatorio:
+        st.write(" ")
+
+        botao_relatorio = st.button("Gerar")
+
+    st.divider()
+    
+    if botao_relatorio:
+        st.session_state["mape_relatorio"] = calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio, tipo_dia, st.session_state["feriados"])
 
         col_21, col_22 = st.columns([3, 1])
 
