@@ -3,8 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
-import seaborn as sns
-import matplotlib.pyplot as plt
 from datetime import datetime
 
 
@@ -459,12 +457,8 @@ def mape(y_true, y_pred):
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
     
 
-def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim, tipo_dia, feriados):
-    verificada = verificada[(verificada.index.date >= inicio) & (verificada.index.date <= fim)][[area]]
+def filtra_carga_relatorio(programada, prevista, modelos, area, inicio, fim, tipo_dia, feriados):
     programada = programada[(programada.index.date >= inicio) & (programada.index.date <= fim)][[area]]
-
-    verificada = verificada.rename(columns={area: 'val_cargaglobal'})
-
     programada = programada.rename(columns={area: 'val_cargaprevista'})
     programada['modelo'] = "Programada"
 
@@ -477,9 +471,6 @@ def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim, t
 
 
     previsoes_modelos = previsoes_modelos[previsoes_modelos['modelo'].isin(modelos)]
-
-    resultados = []
-    resultado_df = pd.DataFrame()
 
     if not previsoes_modelos.empty:
         previsoes_modelos['dia'] = pd.to_datetime(previsoes_modelos.index).date
@@ -496,9 +487,18 @@ def calcula_mape(verificada, programada, prevista, modelos, area, inicio, fim, t
         elif "Fim de Semana" in tipo_dia:
             previsoes_modelos = previsoes_modelos[previsoes_modelos.index.dayofweek >= 5]
         else:
-            return resultado_df
+            return pd.DataFrame()
         
+    return previsoes_modelos
 
+
+def calcula_mape(verificada, previsoes_modelos, area):
+    verificada = verificada.rename(columns={area: 'val_cargaglobal'})
+
+    resultados = []
+    resultado_df = pd.DataFrame()
+
+    if not previsoes_modelos.empty:
         for (dia, modelo), grupo in previsoes_modelos.groupby(['dia', 'modelo']):
             if not grupo.empty:
                 verificada_dia = verificada[verificada.index.date == dia]
@@ -673,6 +673,8 @@ def main():
 def relatorio():
     if "mape_relatorio" not in st.session_state:
         st.session_state["mape_relatorio"] = pd.DataFrame()
+    if "carga_prevista_filtrada" not in st.session_state:
+        st.session_state["carga_prevista_filtrada"] = pd.DataFrame()
 
     col_11, col_12, col_13 = st.columns(3)
 
@@ -728,7 +730,8 @@ def relatorio():
     st.divider()
     
     if botao_relatorio:
-        st.session_state["mape_relatorio"] = calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio, tipo_dia, st.session_state["feriados"])
+        st.session_state["carga_prevista_filtrada"] = filtra_carga_relatorio(st.session_state["carga_programada"], st.session_state["carga_prevista"], modelos, area, inicio_relatorio, fim_relatorio, tipo_dia, st.session_state["feriados"])
+        st.session_state["mape_relatorio"] = calcula_mape(st.session_state["carga_verificada"], st.session_state["carga_prevista_filtrada"], area)
 
         col_21, col_22 = st.columns([3, 1])
 
