@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
+from time import sleep
 from datetime import datetime
 
 
@@ -690,6 +691,7 @@ def main():
                             st.session_state["carga_prevista"], uploaded_file, modelo_nome, area_nome, opcao_verifica_freq
                         )
 
+                        sleep(2)
                         st.rerun()
                     else:
                         st.warning("Por favor, selecione um arquivo CSV e informe o nome do modelo.")
@@ -708,7 +710,8 @@ def main():
                     if remover_previsao:
                         if modelo_nome_remover is not None and remover_area is not None:
                             st.session_state["carga_prevista"] = remove_previsao(st.session_state["carga_prevista"], modelo_nome_remover, remover_area)
-                            st.success(f"Previsões do modelo '{modelo_nome_remover}' removidas com sucesso para a área '{remover_area}'!")
+
+                            sleep(2)
                             st.rerun()
                         else:
                             st.warning("Por favor, informe o nome do modelo a ser removido.")
