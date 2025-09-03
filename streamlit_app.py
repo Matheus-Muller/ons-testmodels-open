@@ -523,7 +523,7 @@ def plot_mape_relatorio(mape):
         mapes_df['mes_ano'] = mapes_df['dia'].apply(lambda x: x.strftime('%Y-%m'))
 
         traces = []
-        for modelo in mapes_df['modelo'].unique():
+        for modelo in sorted(mapes_df['modelo'].unique()):
             df_modelo = mapes_df[mapes_df['modelo'] == modelo]
             trace = go.Box(
                 y=df_modelo['mape'],
@@ -555,13 +555,98 @@ def plot_mape_medio(mapes):
     if not mapes.empty:
         mape_medio = mapes.groupby('modelo')['mape'].mean().reset_index()
 
-        for modelo in mape_medio['modelo']:
+        for modelo in sorted(mape_medio['modelo']):
             mape = mape_medio[mape_medio['modelo'] == modelo]['mape'].values[0]
 
             st.metric(
                 label=f"**{modelo}**",
                 value=f"{mape:.2f}%"
             )
+
+
+def plot_scatter_ponta_vale(prevista, verificada, area, tipo='ponta', hora_inicio=16, hora_fim=23):
+    if not prevista.empty:
+        dados_verificados_periodo = verificada[
+            (verificada.index.hour >= hora_inicio) & (verificada.index.hour <= hora_fim)
+        ][[area]].copy()
+        dados_verificados_periodo = dados_verificados_periodo.rename(columns={area: 'val_cargaverificada'})
+
+        if tipo == 'ponta':
+            idx_verificada = dados_verificados_periodo.groupby(dados_verificados_periodo.index.date)['val_cargaverificada'].idxmax()
+        else:
+            idx_verificada = dados_verificados_periodo.groupby(dados_verificados_periodo.index.date)['val_cargaverificada'].idxmin()
+
+        dados_verificados_df = dados_verificados_periodo.loc[idx_verificada]
+
+        lista_de_dados_previstos = []
+        dados_previstos_periodo = prevista[(prevista.index.hour >= hora_inicio) & (prevista.index.hour <= hora_fim)].copy()
+
+        for modelo in dados_previstos_periodo['modelo'].unique():
+            dados_modelo = dados_previstos_periodo[dados_previstos_periodo['modelo'] == modelo]
+
+            if tipo == 'ponta':
+                idx_carga_prevista = dados_modelo.groupby(dados_modelo.index.date)['val_cargaprevista'].idxmax()
+            else: 
+                idx_carga_prevista = dados_modelo.groupby(dados_modelo.index.date)['val_cargaprevista'].idxmin()
+
+            dados_dia_modelo = dados_modelo.loc[idx_carga_prevista]
+            lista_de_dados_previstos.append(dados_dia_modelo)
+
+        dados_previstos_df = pd.concat(lista_de_dados_previstos)
+        dados_previstos_df = dados_previstos_df.sort_index()
+
+        dados_previstos_df.index = dados_previstos_df.index.date
+        dados_verificados_df.index = dados_verificados_df.index.date
+
+        fig = go.Figure()
+        titulo_grafico = f"Previsto vs. Verificado - {tipo.capitalize()}"
+
+        for modelo in sorted(dados_previstos_df['modelo'].unique()):
+            dados_previstos_plot = dados_previstos_df[dados_previstos_df['modelo'] == modelo].copy()
+
+            interseccao_idx = dados_previstos_plot.index.intersection(dados_verificados_df.index)
+            dados_previstos_plot = dados_previstos_plot.reindex(interseccao_idx)
+            dados_verificados_plot = dados_verificados_df.reindex(interseccao_idx)
+
+            fig.add_trace(go.Scatter(
+                x=dados_previstos_plot['val_cargaprevista'],
+                y=dados_verificados_plot['val_cargaverificada'],
+                mode='markers',
+                name=modelo,
+                marker=dict(size=8, opacity=0.8, line=dict(width=0.5)),
+                hovertemplate=(
+                    f"<b>{modelo}</b><br>"
+                    "<b>Data</b>: %{customdata}<br>"
+                    "<b>Previsto</b>: %{x:.1f}<br>"
+                    "<b>Verificado</b>: %{y:.1f}<br>"
+                    "<extra></extra>"
+                ),
+                customdata=dados_previstos_plot.index
+            ))
+
+        min_val = min(dados_verificados_df['val_cargaverificada'].min(), dados_previstos_df['val_cargaprevista'].min())
+        max_val = max(dados_verificados_df['val_cargaverificada'].max(), dados_previstos_df['val_cargaprevista'].max())
+        fig.add_trace(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            name='Previsão Ótima',
+            line=dict(color='gray', dash='dash')
+        ))    
+        
+        fig.update_layout(
+            title={
+                'text': titulo_grafico,
+                'font': {'size': 20},
+                'x': 0.5,
+                'xanchor': 'center'
+            },
+            xaxis_title="Carga Prevista (MWMed)",
+            yaxis_title="Carga Verificada (MWMed)",
+            legend_title="Modelos"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def main():
@@ -754,6 +839,16 @@ def relatorio():
                     )
 
                     plot_mape_medio(st.session_state["mape_relatorio"])
+
+        col_scatter_1, col_scatter_2 = st.columns(2)
+
+        with col_scatter_1:
+            with st.container(height=500):
+                plot_scatter_ponta_vale(st.session_state["carga_prevista_filtrada"], st.session_state["carga_verificada"], area, "ponta")
+
+        with col_scatter_2:
+            with st.container(height=500):
+                plot_scatter_ponta_vale(st.session_state["carga_prevista_filtrada"], st.session_state["carga_verificada"], area, "vale", 12, 15)
 
 
 if __name__ == "__main__":
